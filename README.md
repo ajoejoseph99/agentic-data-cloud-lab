@@ -12,22 +12,64 @@ The mesh does not require or use hardcoded dataset names, table names, or schema
 
 ---
 
-## Quickstart Setup & Run
+## GCP Prerequisites & Setup
 
-Copy and run the following commands in your bash terminal to set up the environment, install the workspace package, seed the sandbox database, run the FastAPI server, and test the dynamic discovery query:
+Before running the quickstart, you must set up your Google Cloud project environment. Run the following commands to enable the required APIs, configure your local ADC credentials, and set up your billing project:
 
 ```bash
-# 1. Set Google Cloud Project ID
-export GOOGLE_CLOUD_PROJECT="<<YOUR_PROJECT_ID>>"
+# 1. Authenticate with Google Cloud CLI
+gcloud auth login
+gcloud auth application-default login
 
-# 2. Install current package in editable mode
+# 2. Configure target GCP project
+export GOOGLE_CLOUD_PROJECT="<<YOUR_PROJECT_ID>>"
+gcloud config set project $GOOGLE_CLOUD_PROJECT
+
+# 3. Enable BigQuery and Vertex AI APIs
+gcloud services enable \
+  bigquery.googleapis.com \
+  aiplatform.googleapis.com
+```
+
+### Required IAM Permissions
+
+Run the following script to grant the required IAM permissions to your logged-in Google Cloud account:
+
+```bash
+# Get the active account email automatically from gcloud config
+USER_EMAIL=$(gcloud config get-value account)
+
+# Grant Vertex AI User role
+gcloud projects add-iam-policy-binding $GOOGLE_CLOUD_PROJECT \
+  --member="user:$USER_EMAIL" \
+  --role="roles/aiplatform.user"
+
+# Grant BigQuery Data Viewer role
+gcloud projects add-iam-policy-binding $GOOGLE_CLOUD_PROJECT \
+  --member="user:$USER_EMAIL" \
+  --role="roles/bigquery.dataViewer"
+
+# Grant BigQuery Job User role
+gcloud projects add-iam-policy-binding $GOOGLE_CLOUD_PROJECT \
+  --member="user:$USER_EMAIL" \
+  --role="roles/bigquery.jobUser"
+```
+
+---
+
+## Quickstart Setup & Run
+
+Copy and run the following commands in your bash terminal to install the workspace package, seed the sandbox database, run the FastAPI server, and test the dynamic discovery query:
+
+```bash
+# 1. Install current package in editable mode
 pip install -e .
 
-# 3. Seed the sandbox database in BigQuery
+# 2. Seed the sandbox database in BigQuery
 python seed_mock_data.py
 
-# 4. Start the FastAPI API Server with Uvicorn
-PYTHONUNBUFFERED=1 GOOGLE_CLOUD_PROJECT=<<YOUR_PROJECT_ID>> uvicorn main:app --reload --host 0.0.0.0 --port 8080
+# 3. Start the FastAPI API Server with Uvicorn
+PYTHONUNBUFFERED=1 GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT uvicorn main:app --reload --host 0.0.0.0 --port 8080
 ```
 
 Open a new terminal to query the mesh and test dynamic schema discovery:
