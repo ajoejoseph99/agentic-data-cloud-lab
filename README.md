@@ -68,18 +68,33 @@ pip install -e .
 # 2. Seed the sandbox database in BigQuery
 python seed_mock_data.py
 
-# 3. Start the FastAPI API Server with Uvicorn
+# 3. Choose your execution interface:
+
+# OPTION A: Start the FastAPI API Server
 PYTHONUNBUFFERED=1 GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT uvicorn main:app --reload --host 0.0.0.0 --port 8080
+
+# OPTION B: Start the interactive ADK Web UI
+# (Note: Use absolute path `~/Library/Python/3.11/bin/adk web .` if `adk` is not in your PATH)
+GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT adk web .
 ```
 
-Open a new terminal to query the mesh and test dynamic schema discovery:
+### Interacting and Testing the Agents
 
+Depending on the option you selected in Step 3:
+
+#### If running the FastAPI Server (Option A):
+Open a new terminal and send a POST request:
 ```bash
-# 5. Query the endpoint to test dynamic discovery
 curl -X POST "http://localhost:8080/query" \
      -H "Content-Type: application/json" \
      -d '{"user_input": "What is the total revenue for transactions that were delayed in Q1?"}'
 ```
+
+#### If running the ADK Web UI (Option B):
+1. Open your browser and navigate to the local URL printed in your terminal (typically `http://127.0.0.1:8000`).
+2. Select your agent from the list.
+3. Submit your query directly in the chat box: *"What is the total revenue for transactions that were delayed in Q1?"*
+4. Watch the agent plan, call MCP tools, and discover schemas in real time.
 
 ---
 
