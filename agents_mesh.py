@@ -22,6 +22,7 @@ agent_config = types.GenerateContentConfig(
 planner_agent = Agent(
     model="gemini-2.5-flash",
     name="planner_agent",
+    mode="chat",
     instruction=f"""You are a Strategic Data Planner for GCP project '{gcp_project}'. 
     Your goal is to analyze a user's natural language request and formulate a precise, 
     step-by-step execution plan to discover the schema and fetch the necessary data from BigQuery.
@@ -41,14 +42,17 @@ planner_agent = Agent(
 executor_agent = Agent(
     model="gemini-2.5-flash",
     name="executor_agent",
+    mode="chat",
     instruction=f"""You are a Data Operations Executor operating in GCP project '{gcp_project}'.
     You will receive a plan from the Planner Agent. Use your provided tools to securely access BigQuery.
     
     CRITICAL PROTOCOL:
     1. Do NOT assume database, dataset, or table names. You must discover them step-by-step using your tools.
     2. Every tool in your 'tools' list (such as `list_dataset_ids`, `list_table_ids`, `get_table_info`, and `execute_sql_readonly`) requires the `projectId` parameter. You MUST set `projectId` to '{gcp_project}' for every single tool call.
-    3. Step-by-step: First list datasets, locate the relevant sandbox dataset, list the tables in it, check table schemas, and run a read-only query on the discovered table.
-    4. Compile the results from your tool executions into a clear, business-ready summary. Never show SQL to the user in your final response.""",
+    3. Step-by-step: First list datasets. Identify custom or sandbox datasets (like those containing 'sandbox' or 'enterprise') as the primary target. Proceed immediately to list the tables in that dataset to find the target data; do not loop listing datasets.
+    4. Compile the results from your tool executions into a clear, business-ready summary. Never show SQL to the user in your final response.
+    5. MCP Response Format: Tool outputs may be wrapped in an MCP structure where the actual JSON payload is a serialized string inside `content[0]['text']`. For example, `list_dataset_ids` returns `{{"datasets": [{{"id": "project:dataset_id"}}]}}`. You must parse this string, extract the clean `dataset_id` (the portion after the colon, e.g., 'adk_enterprise_sandbox'), and use it as the `datasetId` argument for subsequent tool calls like `list_table_ids`.
+    6. Case Sensitivity: BigQuery string matching is case-sensitive. BigQuery table status values are stored in uppercase (e.g. 'DELAYED'). You must query with the correct case or use UPPER(status) = 'DELAYED' to ensure a match.""",
     tools=[bq_toolset],
     generate_content_config=agent_config
 )
@@ -65,18 +69,29 @@ async def execute_adk_agent(agent: Agent, text: str) -> str:
     else:
         agent.generate_content_config.response_modalities = ["TEXT"]
     
-    # 2. Synthesize the Session object
-    session = Session(
-        id=str(uuid.uuid4()),
+    # 2. Synthesize the Session object using InMemorySessionService
+    from google.adk.sessions.in_memory_session_service import InMemorySessionService
+    from google.adk.events.event import Event
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(
         app_name="agentic_data_cloud",
         user_id="user",
-        state={},
-        events=[]
+        session_id=str(uuid.uuid4())
     )
+    
+    # Pre-populate the session with the user input so chat mode gets the request as history
+    user_event = Event(
+        author="user",
+        content=types.Content(
+            role="user",
+            parts=[types.Part(text=text)]
+        )
+    )
+    await session_service.append_event(session, user_event)
     
     # 3. Synthesize the Pydantic InvocationContext
     inv_ctx = InvocationContext.model_construct(
-        session_service=None,
+        session_service=session_service,
         session=session,
         invocation_id=str(uuid.uuid4()),
         run_config=RunConfig(response_modalities=["TEXT"])
@@ -94,6 +109,9 @@ async def execute_adk_agent(agent: Agent, text: str) -> str:
     
     async for event in agent.run(ctx=ctx, node_input=text):
         print(f"[{agent.name}] EVENT: {type(event).__name__} - {str(event)[:300]}")
+        # Critical: Append yielded event to update session history for the internal LLM flow loop
+        await session_service.append_event(session, event)
+        
         if hasattr(event, 'content') and event.content is not None:
             if isinstance(event.content, str):
                 final_output += event.content
